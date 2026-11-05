@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Video -> Transkript (Whisper) -> Claude waehlt Highlights -> FFmpeg schneidet 9:16 Clips mit Untertiteln."""
-import argparse, json, subprocess, re
+import argparse, json, os, shutil, subprocess, re
 from pathlib import Path
 
 MODEL = "claude-sonnet-5-5"
@@ -16,7 +16,6 @@ def transcribe(video, lang, size):
     return out
 
 def pick_clips(segments, n, lo, hi, lang):
-    import anthropic
     transcript = "\n".join(f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in segments)
     prompt = f"""Du bist Editor fuer TikTok/Instagram Reels. Waehle aus dem Transkript die {n} besten
 Clips ({lo}-{hi} Sekunden). Kriterien: starker Hook in den ersten 3 Sekunden, in sich abgeschlossen,
@@ -26,10 +25,20 @@ Antworte NUR mit JSON: [{{"start":float,"end":float,"title":str,"caption":str,"h
 
 Transkript:
 {transcript}"""
-    r = anthropic.Anthropic().messages.create(model=MODEL, max_tokens=4000,
-                                              messages=[{"role": "user", "content": prompt}])
-    text = r.content[0].text
+    text = ask_claude(prompt)
     return json.loads(re.search(r"\[.*\]", text, re.S).group(0))
+
+def ask_claude(prompt):
+    """Mit ANTHROPIC_API_KEY ueber die API, sonst ueber das lokale `claude`-CLI (Abo)."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        import anthropic
+        r = anthropic.Anthropic().messages.create(model=MODEL, max_tokens=4000,
+                                                  messages=[{"role": "user", "content": prompt}])
+        return r.content[0].text
+    if shutil.which("claude"):
+        r = subprocess.run(["claude", "-p"], input=prompt, capture_output=True, text=True, check=True)
+        return r.stdout
+    raise SystemExit("Weder ANTHROPIC_API_KEY gesetzt noch `claude`-CLI gefunden.")
 
 def ass_time(t):
     h, m, s = int(t // 3600), int(t % 3600 // 60), t % 60
